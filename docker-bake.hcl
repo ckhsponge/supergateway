@@ -17,7 +17,10 @@ target "base" {
   tags = [
     "supercorp/supergateway:latest",
     "supercorp/supergateway:base",
-    "supercorp/supergateway:${VERSION}"
+    "supercorp/supergateway:${VERSION}",
+    "ghcr.io/supercorp-ai/supergateway:latest",
+    "ghcr.io/supercorp-ai/supergateway:base",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}"
   ]
 }
 
@@ -28,7 +31,9 @@ target "uvx" {
   contexts = { base = "target:base" }
   tags = [
     "supercorp/supergateway:uvx",
-    "supercorp/supergateway:${VERSION}-uvx"
+    "supercorp/supergateway:${VERSION}-uvx",
+    "ghcr.io/supercorp-ai/supergateway:uvx",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}-uvx"
   ]
 }
 
@@ -39,6 +44,8 @@ target "deno" {
   contexts = { base = "target:base" }
   tags = [
     "supercorp/supergateway:deno",
-    "supercorp/supergateway:${VERSION}-deno"
+    "supercorp/supergateway:${VERSION}-deno",
+    "ghcr.io/supercorp-ai/supergateway:deno",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}-deno"
   ]
 }
