@@ -265,10 +265,10 @@ export async function stdioToStatefulStreamableHttp(
   // Handle DELETE requests for session termination
   app.delete(streamableHttpPath, handleSessionRequest)
 
-  app.listen(port, () => {
+  app.listen(port, '0.0.0.0', () => {
     logger.info(`Listening on port ${port}`)
     logger.info(
-      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+      `StreamableHttp endpoint: http://0.0.0.0:${port}${streamableHttpPath}`,
     )
   })
 }
