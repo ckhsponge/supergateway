@@ -128,6 +128,17 @@ export async function stdioToStatelessStreamableHttp(
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`
     logger.info(`[${requestId}] New request`)
 
+    // Handle ping directly without spawning a child process. The ping method
+    // is a standard JSON-RPC keepalive that requires no MCP server involvement.
+    // Spawning a child for ping causes a ~1s delay and a race condition when
+    // the SDK cleans up the connection map before the child finishes starting.
+    const body = req.body
+    if (body?.method === 'ping' && body?.id !== undefined) {
+      logger.info(`[${requestId}] Handling ping directly (id=${body.id})`)
+      res.json({ jsonrpc: '2.0', id: body.id, result: {} })
+      return
+    }
+
     try {
       const server = new Server(
         { name: 'supergateway', version: getVersion() },
