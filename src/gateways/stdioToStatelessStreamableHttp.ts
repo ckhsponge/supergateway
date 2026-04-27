@@ -138,6 +138,27 @@ export async function stdioToStatelessStreamableHttp(
       let isAutoInitializing = false // Flag to indicate if we're auto-initializing
       let pendingOriginalMessage: JSONRPCMessage | null = null
 
+      // Buffer messages that arrive from the child before handleRequest has
+      // finished registering the HTTP connection internally. Without this,
+      // fast-responding MCP servers can trigger transport.send() before the
+      // transport's internal request map is populated, causing:
+      //   "No connection established for request ID: <n>"
+      let handleRequestDone = false
+      const preHandleQueue: JSONRPCMessage[] = []
+
+      const sendToTransport = (jsonMsg: JSONRPCMessage) => {
+        if (!handleRequestDone) {
+          logger.info(`[buffer] Queuing message (handleRequest not yet done): ${JSON.stringify(jsonMsg)}`)
+          preHandleQueue.push(jsonMsg)
+        } else {
+          try {
+            transport.send(jsonMsg)
+          } catch (e) {
+            logger.error(`Failed to send to StreamableHttp`, e)
+          }
+        }
+      }
+
       let buffer = ''
       child.stdout.on('data', (chunk: Buffer) => {
         buffer += chunk.toString('utf8')
@@ -188,11 +209,7 @@ export async function stdioToStatelessStreamableHttp(
               }
             }
 
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            }
+            sendToTransport(jsonMsg)
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }
@@ -251,6 +268,22 @@ export async function stdioToStatelessStreamableHttp(
       }
 
       await transport.handleRequest(req, res, req.body)
+
+      // Mark as ready and flush any messages that arrived during handleRequest
+      handleRequestDone = true
+      if (preHandleQueue.length > 0) {
+        logger.info(`[buffer] handleRequest done, flushing ${preHandleQueue.length} queued message(s)`)
+        for (const msg of preHandleQueue) {
+          logger.info(`[buffer] Flushing queued message: ${JSON.stringify(msg)}`)
+          try {
+            transport.send(msg)
+          } catch (e) {
+            logger.error(`Failed to send queued message to StreamableHttp`, e)
+          }
+        }
+      } else {
+        logger.info(`[buffer] handleRequest done, no messages were queued (race condition did not occur)`)
+      }
     } catch (error) {
       logger.error('Error handling MCP request:', error)
       if (!res.headersSent) {
