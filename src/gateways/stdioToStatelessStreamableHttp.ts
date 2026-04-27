@@ -94,6 +94,16 @@ export async function stdioToStatelessStreamableHttp(
 
   onSignals({ logger })
 
+  // Prevent transport.send() errors from crashing the process.
+  // These can occur when the SDK's internal connection map is cleaned up
+  // after a response is sent but before our transportClosed flag is set.
+  process.on('uncaughtException', (err) => {
+    logger.error('[stateless] Uncaught exception (server kept alive):', err)
+  })
+  process.on('unhandledRejection', (reason) => {
+    logger.error('[stateless] Unhandled rejection (server kept alive):', reason)
+  })
+
   const app = express()
   app.use(express.json())
 
