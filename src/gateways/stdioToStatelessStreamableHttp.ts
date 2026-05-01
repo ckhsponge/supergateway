@@ -135,7 +135,26 @@ export async function stdioToStatelessStreamableHttp(
     const body = req.body
     if (body?.method === 'ping' && body?.id !== undefined) {
       logger.info(`[${requestId}] Handling ping directly (id=${body.id})`)
-      res.json({ jsonrpc: '2.0', id: body.id, result: {} })
+      try {
+        const pingServer = new Server(
+          { name: 'supergateway', version: getVersion() },
+          { capabilities: {} },
+        )
+        const pingTransport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        })
+        await pingServer.connect(pingTransport)
+        await pingTransport.handleRequest(req, res, req.body)
+      } catch (pingErr) {
+        logger.error(`[${requestId}] Ping handler error:`, pingErr)
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: { code: -32603, message: 'Internal server error' },
+            id: body.id,
+          })
+        }
+      }
       return
     }
 
@@ -152,7 +171,9 @@ export async function stdioToStatelessStreamableHttp(
       const child = spawn(stdioCmd, { shell: true })
       logger.info(`[${requestId}] Spawned child pid=${child.pid}`)
       child.on('exit', (code, signal) => {
-        logger.error(`[${requestId}] Child pid=${child.pid} exited: code=${code}, signal=${signal}`)
+        logger.error(
+          `[${requestId}] Child pid=${child.pid} exited: code=${code}, signal=${signal}`,
+        )
         transport.close()
       })
 
@@ -173,17 +194,24 @@ export async function stdioToStatelessStreamableHttp(
 
       const sendToTransport = (jsonMsg: JSONRPCMessage) => {
         if (transportClosed) {
-          logger.info(`[${requestId}] [buffer] Dropping message, transport already closed: ${JSON.stringify(jsonMsg)}`)
+          logger.info(
+            `[${requestId}] [buffer] Dropping message, transport already closed: ${JSON.stringify(jsonMsg)}`,
+          )
           return
         }
         if (!handleRequestDone) {
-          logger.info(`[${requestId}] [buffer] Queuing message (handleRequest not yet done): ${JSON.stringify(jsonMsg)}`)
+          logger.info(
+            `[${requestId}] [buffer] Queuing message (handleRequest not yet done): ${JSON.stringify(jsonMsg)}`,
+          )
           preHandleQueue.push(jsonMsg)
         } else {
           try {
             transport.send(jsonMsg)
           } catch (e) {
-            logger.error(`[${requestId}] [buffer] sendToTransport failed, dropping message: ${JSON.stringify(jsonMsg)}`, e)
+            logger.error(
+              `[${requestId}] [buffer] sendToTransport failed, dropping message: ${JSON.stringify(jsonMsg)}`,
+              e,
+            )
           }
         }
       }
@@ -250,7 +278,9 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       transport.onmessage = (msg: JSONRPCMessage) => {
-        logger.info(`[${requestId}] StreamableHttp → Child: ${JSON.stringify(msg)}`)
+        logger.info(
+          `[${requestId}] StreamableHttp → Child: ${JSON.stringify(msg)}`,
+        )
 
         // Check if we need to auto-initialize first
         if (!isInitialized && !isInitializeRequest(msg)) {
@@ -279,7 +309,9 @@ export async function stdioToStatelessStreamableHttp(
         if (isInitializeRequest(msg) && 'id' in msg && msg.id !== undefined) {
           initializeRequestId = msg.id
           isAutoInitializing = false // This is client-initiated
-          logger.info(`[${requestId}] Tracking initialize request ID: ${msg.id}`)
+          logger.info(
+            `[${requestId}] Tracking initialize request ID: ${msg.id}`,
+          )
         }
 
         // Send all messages to child process normally
@@ -287,7 +319,9 @@ export async function stdioToStatelessStreamableHttp(
       }
 
       transport.onclose = () => {
-        logger.info(`[${requestId}] [buffer] StreamableHttp connection closed, killing child pid=${child.pid}`)
+        logger.info(
+          `[${requestId}] [buffer] StreamableHttp connection closed, killing child pid=${child.pid}`,
+        )
         transportClosed = true
         child.kill()
       }
@@ -303,21 +337,32 @@ export async function stdioToStatelessStreamableHttp(
       // Mark as ready and flush any messages that arrived during handleRequest
       handleRequestDone = true
       if (preHandleQueue.length > 0) {
-        logger.info(`[${requestId}] [buffer] handleRequest done, flushing ${preHandleQueue.length} queued message(s)`)
+        logger.info(
+          `[${requestId}] [buffer] handleRequest done, flushing ${preHandleQueue.length} queued message(s)`,
+        )
         for (const msg of preHandleQueue) {
           if (transportClosed) {
-            logger.info(`[${requestId}] [buffer] Transport closed during flush, dropping remaining queued messages`)
+            logger.info(
+              `[${requestId}] [buffer] Transport closed during flush, dropping remaining queued messages`,
+            )
             break
           }
-          logger.info(`[${requestId}] [buffer] Flushing queued message: ${JSON.stringify(msg)}`)
+          logger.info(
+            `[${requestId}] [buffer] Flushing queued message: ${JSON.stringify(msg)}`,
+          )
           try {
             transport.send(msg)
           } catch (e) {
-            logger.error(`[${requestId}] [buffer] Failed to send queued message to StreamableHttp`, e)
+            logger.error(
+              `[${requestId}] [buffer] Failed to send queued message to StreamableHttp`,
+              e,
+            )
           }
         }
       } else {
-        logger.info(`[${requestId}] [buffer] handleRequest done, no messages were queued (race condition did not occur)`)
+        logger.info(
+          `[${requestId}] [buffer] handleRequest done, no messages were queued (race condition did not occur)`,
+        )
       }
     } catch (error) {
       logger.error(`Error handling MCP request:`, error)
