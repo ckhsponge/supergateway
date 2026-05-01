@@ -112,7 +112,8 @@ export async function stdioToStatelessStreamableHttp(
   }
 
   for (const ep of healthEndpoints) {
-    app.get(ep, (_req, res) => {
+    app.get(ep, (req, res) => {
+      logger.info(`Health check: GET ${req.path} → 200`)
       setResponseHeaders({
         res,
         headers,
@@ -126,13 +127,40 @@ export async function stdioToStatelessStreamableHttp(
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`
-    logger.info(`[${requestId}] New request`)
+
+    const body = req.body
+    const method = body?.method ?? '(unknown)'
+    const id = body?.id ?? '(none)'
+    logger.info(`[${requestId}] New request: method=${method} id=${id}`)
+
+    // Log headers that are relevant for debugging protocol/session issues
+    const relevantHeaders = [
+      'content-type',
+      'accept',
+      'mcp-session-id',
+      'mcp-protocol-version',
+      'authorization',
+    ]
+    const incomingHeaders = relevantHeaders
+      .filter((h) => req.headers[h] !== undefined)
+      .map((h) =>
+        h === 'authorization' ? `${h}: [redacted]` : `${h}: ${req.headers[h]}`,
+      )
+    if (incomingHeaders.length > 0) {
+      logger.info(`[${requestId}] Headers: ${incomingHeaders.join(', ')}`)
+    }
+
+    // Intercept res.writeHead to log the response status
+    const originalWriteHead = res.writeHead.bind(res)
+    ;(res as any).writeHead = (statusCode: number, ...args: any[]) => {
+      logger.info(`[${requestId}] Response: status=${statusCode}`)
+      return originalWriteHead(statusCode, ...args)
+    }
 
     // Handle ping directly without spawning a child process. The ping method
     // is a standard JSON-RPC keepalive that requires no MCP server involvement.
     // Spawning a child for ping causes a ~1s delay and a race condition when
     // the SDK cleans up the connection map before the child finishes starting.
-    const body = req.body
     if (body?.method === 'ping' && body?.id !== undefined) {
       logger.info(`[${requestId}] Handling ping directly (id=${body.id})`)
       try {
@@ -142,6 +170,7 @@ export async function stdioToStatelessStreamableHttp(
         )
         const pingTransport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
+          enableJsonResponse: true,
         })
         await pingServer.connect(pingTransport)
         await pingTransport.handleRequest(req, res, req.body)
@@ -165,6 +194,7 @@ export async function stdioToStatelessStreamableHttp(
       )
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
+        enableJsonResponse: true,
       })
 
       await server.connect(transport)
@@ -333,6 +363,7 @@ export async function stdioToStatelessStreamableHttp(
       }
 
       await transport.handleRequest(req, res, req.body)
+      logger.info(`[${requestId}] handleRequest complete`)
 
       // Mark as ready and flush any messages that arrived during handleRequest
       handleRequestDone = true
@@ -365,7 +396,7 @@ export async function stdioToStatelessStreamableHttp(
         )
       }
     } catch (error) {
-      logger.error(`Error handling MCP request:`, error)
+      logger.error(`[${requestId}] Error handling MCP request:`, error)
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: '2.0',
